@@ -20,9 +20,9 @@ parser.add_argument(
 parser.add_argument(
     '--num_points', type=int, default=2048, help='number of points')
 parser.add_argument(
-    '--workers', type=int, help='number of data loading workers', default=4)
+    '--workers', type=int, help='number of data loading workers', default=2)
 parser.add_argument(
-    '--nepoch', type=int, default=250, help='number of epochs to train')
+    '--nepoch', type=int, default=50, help='number of epochs to train')
 parser.add_argument(
     '--dataset', type=str, default='modelnet40', help="dataset path")
 parser.add_argument(
@@ -35,7 +35,8 @@ print(opt)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-opt.manualSeed = random.randint(1, 10000)  # fix seed
+# opt.manualSeed = random.randint(1, 10000)  # fix seed
+opt.manualSeed = 42
 print("Random Seed: ", opt.manualSeed)
 random.seed(opt.manualSeed)
 torch.manual_seed(opt.manualSeed)
@@ -47,25 +48,84 @@ trainset = ModelNetDataset(
     split='train',
     data_augmentation=False)
 
-print("hey")
-
 testset = ModelNetDataset(
     root=opt.dataset,
     split='test',
     sub_sampling=False,
     data_augmentation=False)
 
+import torch
+import numpy as np
+
+def custom_collate_fn(batch):
+    """
+    Custom collate function for padding point clouds in a batch to the same size.
+    
+    Arguments:
+    - batch: A list of tuples (data, label), where:
+      - data: Point cloud data (N_points x 3)
+      - label: Corresponding label for the point cloud
+    
+    Returns:
+    - padded_data: A tensor of shape (batch_size, max_points, 3)
+    - labels: A tensor of shape (batch_size, ...)
+    - masks: A tensor of shape (batch_size, max_points) (optional)
+    """
+    
+    # Determine the maximum number of points in the batch
+    max_num_points = max([pc.shape[0] for pc, _ in batch])  # max points in the batch
+    
+    # Initialize lists to hold padded data and masks
+    padded_data = []
+    labels = []
+    masks = []
+    
+    # Iterate over each point cloud in the batch
+    for pc, label in batch:
+        num_points = pc.shape[0]
+        
+        # Padding the point cloud to match the maximum number of points
+        if num_points < max_num_points:
+            padding = np.zeros((max_num_points - num_points, 3))  # Zero padding for missing points
+            padded_pc = np.vstack([pc, padding])  # Add padding
+        else:
+            padded_pc = pc  # No padding needed
+
+        # Create mask (1 for real points, 0 for padded points)
+        mask = np.ones(max_num_points)
+        if num_points < max_num_points:
+            mask[num_points:] = 0  # Set padding indices to 0
+
+        # Append to lists
+        padded_data.append(torch.tensor(padded_pc, dtype=torch.float32))  # Convert to tensor
+        labels.append(label)  # Keep the label unchanged
+        masks.append(torch.tensor(mask, dtype=torch.float32))  # Mask as tensor
+
+    # Stack the data to create a batch tensor (batch_size, max_points, 3)
+    padded_data = torch.stack(padded_data, dim=0)
+    masks = torch.stack(masks, dim=0)  # Optional: Mask tensor
+
+    # If you need to return the label as well, do so here
+    return padded_data, torch.tensor(labels)
+
+# Example usage:
 trainloader = torch.utils.data.DataLoader(
     trainset,
     batch_size=opt.batchSize,
     shuffle=True,
-    num_workers=int(opt.workers))
+    num_workers=int(opt.workers),
+    collate_fn=custom_collate_fn  # Use the custom collate function
+)
 
 testloader = torch.utils.data.DataLoader(
-        testset,
-        batch_size=opt.batchSize,
-        shuffle=True,
-        num_workers=int(opt.workers))
+    testset,
+    batch_size=opt.batchSize,
+    shuffle=True,
+    num_workers=int(opt.workers),
+    collate_fn=custom_collate_fn  # Use the custom collate function
+)
+
+
 
 # Get a subset of the experiment dataset
 trainset.data = trainset.data[:opt.split]
