@@ -8,6 +8,9 @@ from dataset.dataset import ModelNetDataset
 from model.pointnet import PointNetCls
 from tqdm import tqdm
 
+import multiprocessing
+multiprocessing.set_start_method("fork")
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -30,7 +33,8 @@ print(opt)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-opt.manualSeed = random.randint(1, 10000)  # fix seed
+# opt.manualSeed = random.randint(1, 10000)  # fix seed
+opt.manualSeed = 42
 print("Random Seed: ", opt.manualSeed)
 random.seed(opt.manualSeed)
 torch.manual_seed(opt.manualSeed)

@@ -124,8 +124,8 @@ class ModelNetDataset(data.Dataset):
                 i = 0
                 for row in reader:
                     i += 1
-                    if i % 2 == 0:
-                        continue
+                    # if i % 2 == 0:
+                    #     continue
                     if row['split'] == split:
                         filepath = os.path.join(root, row['object_path'].strip())
                         label = row['class'].strip()
@@ -168,11 +168,11 @@ class ModelNetDataset(data.Dataset):
                     self.labels.append(self.cat[label])
             except Exception as e:
                 print(f"Error reading {fn}: {e}")
-        print("heee")
-        self.data = np.array(self.data)
-        self.labels = np.array(self.labels)
-        np.save("../{self.split}_data.np", self.data)
-        np.save("../{self.split}_labels.np", self.labels)
+        # print("heee")
+        # self.data = np.array(self.data)
+        # self.labels = np.array(self.labels)
+        # np.save("../{self.split}_data.np", self.data)
+        # np.save("../{self.split}_labels.np", self.labels)
 
     def __getitem__(self, index):
         points = self.data[index]

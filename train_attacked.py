@@ -10,16 +10,19 @@ from model.pointnet import PointNetCls, feature_transform_regularizer
 import torch.nn.functional as F
 from tqdm import tqdm
 
+import multiprocessing
+multiprocessing.set_start_method("fork")
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
     '--batchSize', type=int, default=32, help='input batch size')
 parser.add_argument(
-    '--num_points', type=int, default=1024, help='number of points')
+    '--num_points', type=int, default=2048, help='number of points')
 parser.add_argument(
     '--workers', type=int, help='number of data loading workers', default=4)
 parser.add_argument(
-    '--nepoch', type=int, default=150, help='number of epochs to train for')
+    '--nepoch', type=int, default=50, help='number of epochs to train for')
 parser.add_argument(
     '--attack_dir', type=str, default='attack', help='attack folder')
 parser.add_argument(
@@ -27,7 +30,7 @@ parser.add_argument(
 parser.add_argument(
     '--dataset', type=str, default='modelnet40', help="dataset path")
 parser.add_argument(
-    '--split', type=int, default=1000, help='split the original dataset to get a small dataset possessed by the attacker')
+    '--split', type=int, default=500, help='split the original dataset to get a small dataset possessed by the attacker')
 parser.add_argument(
     '--feature_transform', action='store_true', help="use feature transform")
 
@@ -36,7 +39,8 @@ print(opt)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-opt.manualSeed = random.randint(1, 10000)  # fix seed
+# opt.manualSeed = random.randint(1, 10000)  # fix seed
+opt.manualSeed = 42
 print("Random Seed: ", opt.manualSeed)
 random.seed(opt.manualSeed)
 torch.manual_seed(opt.manualSeed)
@@ -67,6 +71,25 @@ testloader = torch.utils.data.DataLoader(
         shuffle=True,
         num_workers=int(opt.workers))
 
+# Reshape each sample to 2048 points
+def preprocess_to_uniform_shape(data, target_size=2048, feature_size=3):
+    reshaped_data = []
+    for sample in data:
+        if sample.shape[0] > target_size:
+            # Truncate to target_size points
+            reshaped_sample = sample[:target_size, :]
+        elif sample.shape[0] < target_size:
+            # Pad with zeros if less than target_size points
+            padding = np.zeros((target_size - sample.shape[0], feature_size))
+            reshaped_sample = np.vstack([sample, padding])
+        else:
+            # Already the correct shape
+            reshaped_sample = sample
+        reshaped_data.append(reshaped_sample)
+    return np.array(reshaped_data)
+
+
+
 # Get a subset from the original dataset (the rest of the dataset is kept by the attacker)
 trainset.data = trainset.data[opt.split:]
 trainset.labels = trainset.labels[opt.split:]
@@ -79,7 +102,13 @@ print('classes: {}'.format(num_classes))
 attack_data_train = np.load(os.path.join(opt.attack_dir, 'attack_data_train.npy'))
 attack_labels_train = np.load(os.path.join(opt.attack_dir, 'attack_labels_train.npy'))
 # Mix backdoor training samples with clean training samples
-trainset.data = np.concatenate([trainset.data, attack_data_train], axis=0)
+
+trainset.data = preprocess_to_uniform_shape(trainset.data) # Preprocess trainset.data
+train_data_reshaped = np.stack(trainset.data, axis=0)
+print(attack_data_train.shape)
+print(train_data_reshaped.shape)
+
+trainset.data = np.concatenate([train_data_reshaped, attack_data_train], axis=0)
 trainset.labels = np.concatenate([trainset.labels, attack_labels_train], axis=0)
 
 # Load backdoor test samples
@@ -116,8 +145,8 @@ num_batch = len(trainset.labels) / opt.batchSize
 
 
 start_epoch = 0
-for epoch in range(start_epoch, opt.nepoch):
-    print("epoch: {}".format(epoch))
+for epoch in tqdm(range(start_epoch, opt.nepoch)):
+    # print("epoch: {}".format(epoch))
     # Training
     for i, (points, targets) in enumerate(trainloader):
         points = points.transpose(2, 1)

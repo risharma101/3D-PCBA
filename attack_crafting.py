@@ -7,10 +7,15 @@ import copy
 import numpy as np
 import torch.utils.data
 import torch.nn.functional as F
+from tqdm import tqdm
 
 from dataset.dataset import ModelNetDataset
 from model.pointnet import PointNetCls
 from attack_utils import create_points_RS
+
+import multiprocessing
+multiprocessing.set_start_method("fork")
+
 
 parser = argparse.ArgumentParser()
 # Data config
@@ -26,9 +31,9 @@ parser.add_argument(
 parser.add_argument(
     '--attack_dir', type=str, default='attack', help='attack folder')
 parser.add_argument(
-    '--SC', type=int, default=8, help='index of source class')
+    '--SC', type=int, default=1, help='index of source class')
 parser.add_argument(
-    '--TC', type=int, default=35, help='index of target class')
+    '--TC', type=int, default=2, help='index of target class')
 parser.add_argument(
     '--BD_NUM', type=int, default=15, help='number of backdoor training samples to be created')
 parser.add_argument(
@@ -41,7 +46,7 @@ parser.add_argument(
 parser.add_argument(
     '--n_init', type=int, default=10, help='number of random initialization for spatial location optimization')
 parser.add_argument(
-    '--NSTEP', type=int, default=1000, help='max number of iterations for spatial location optimization')
+    '--NSTEP', type=int, default=100, help='max number of iterations for spatial location optimization')
 parser.add_argument(
     '--PI', type=float, default=0.01, help='target posterior for spatial location optimization')
 parser.add_argument(
@@ -70,7 +75,8 @@ print(opt)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-opt.manualSeed = random.randint(1, 10000)  # fix seed
+# opt.manualSeed = random.randint(1, 10000)  # fix seed
+opt.manualSeed = 42
 print("Random Seed: ", opt.manualSeed)
 random.seed(opt.manualSeed)
 torch.manual_seed(opt.manualSeed)
@@ -88,6 +94,7 @@ pointoptset = ModelNetDataset(
     npoints=opt.num_points,
     split='train',
     data_augmentation=False)
+
 pointoptset.data = pointoptset.data[:opt.split]
 pointoptset.labels = pointoptset.labels[:opt.split]
 
@@ -95,11 +102,13 @@ pointoptset.labels = pointoptset.labels[:opt.split]
 ind = [i for i, label in enumerate(pointoptset.labels) if label != opt.SC]
 pointoptset.data = np.delete(pointoptset.data, ind, axis=0)
 pointoptset.labels = np.delete(pointoptset.labels, ind, axis=0)
+
 pointoptloader = torch.utils.data.DataLoader(
     pointoptset,
     batch_size=opt.BATCH_SIZE,
     shuffle=True,
     num_workers=4)
+
 
 # Load the surrogate classifier
 num_classes = len(pointoptset.classes)
@@ -114,6 +123,7 @@ print('Spatial location optimization in progress...')
 centers_best_global = None
 dist_best_global = 1e10
 for t in range(opt.n_init):
+    print('init: {}'.format(t))
     centers = torch.zeros((opt.N, 3))
     while True:
         noise = torch.randn(centers.size()) * .5
@@ -129,7 +139,7 @@ for t in range(opt.n_init):
     stopping_count = 0
     dist_best = 1e10
     centers_best = None
-    for iter in range(opt.NSTEP):
+    for iter in tqdm(range(opt.NSTEP)):
         classifier.zero_grad()
         centers_trial = centers.clone()
         centers_trial = torch.unsqueeze(centers_trial, 0)
